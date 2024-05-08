@@ -8,17 +8,17 @@ Coding test for the TrillionNetwork.com
 
 ```bash
 mix deps.get
-mix test
+mix test --trace
 ```
 
-## Basic Features implemented:
+## Basic Requirements implemented:
 
 - Specify the type of job
 - Specify the job arguments required (specified by the handler)
 - Complete the job in the background (async)
 - Fire and forget semantics. Submitting to the job queue is sufficient and the job system executes the job.
 - Specify the maximum concurrency of the work system (it should not execute an arbitrary number of jobs at the same time)
-- Submitting the job to the system does not wait for the job to be executed
+- Submitting the job to the system does not wait for the job to be executed. (No reply / acknowledgement required when submitting a job)
 - Any build up of jobs enqueued, should be enqueued and executed in received order
 
 ## Bonus Features implemented:
@@ -29,6 +29,7 @@ mix test
 - Lower latency for Genserver (enqueue job will not have head-of-line blocking)
 - Maximum retry attempt count configurable per job
 - Graceful shutdown of job queue (clean stop)
+- Jobs have random completion time between 1 to 2 secs (to better simulate real world conditions)
 - ExUnit test that checks for expected duration (to ensure concurrency is real)
 
 ## Notes
