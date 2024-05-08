@@ -24,7 +24,7 @@ mix test
 ## Bonus Features implemented:
 
 - Error handling (Supervisors)
-- Retry queue
+- Retry queue (with backoff-delay retry strategy)
 - Serializable jobs (Jason)
 - Lower latency for Genserver (enqueue job will not have head-of-line blocking)
 - Maximum retry attempt count configurable per job

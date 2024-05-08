@@ -14,19 +14,12 @@ defmodule Codingtest.JobQueue do
     GenServer.start_link(__MODULE__, %{ max_running: 3 }, name: name)
   end
 
-  def enqueue(%Job{} = job) do
-    # Cast using the local registration name
-    GenServer.cast(__MODULE__, {:enqueue, job})
+  def enqueue(job, pid_like \\ __MODULE__)
+  def enqueue(%Job{} = job, pid_like) do
+    GenServer.cast(pid_like, {:enqueue, job})
   end
-  def enqueue(pid, %Job{} = job) when is_pid(pid) do
-    GenServer.cast(pid, {:enqueue, job})
-  end
-  def enqueue(job_type, job_payload) when is_atom(job_type) do
-    # Cast using the local registration name
-    GenServer.cast(__MODULE__, {:enqueue, %Job{type: job_type, payload: job_payload}})
-  end
-  def enqueue(pid, job_type, job_payload) when is_pid(pid) do
-    GenServer.cast(pid, {:enqueue, %Job{type: job_type, payload: job_payload}})
+  def enqueue({job_type, job_payload}, pid_like) when is_atom(job_type) and is_map(job_payload) do
+    GenServer.cast(pid_like, {:enqueue, %Job{type: job_type, payload: job_payload}})
   end
 
   def stop(pid, force? \\ false, timeout \\ :infinity) when is_pid(pid) do
@@ -44,21 +37,30 @@ defmodule Codingtest.JobQueue do
 
   @impl true
   def init(%{ max_running: max_running }) do
-    # pending is a list of pending jobs
-    # running is a map of running jobs, with a supervised task-reference as the key
-    # max_running is the maximum number of running jobs
-    # requested_stop is a list of pids that have requested to stop the job queue cleanly
-    {:ok, %{ pending: [], running: %{}, max_running: max_running, requested_stop: [] }}
+    # `pending` is a list of pending jobs
+    # `running` is a map of running jobs, with a supervised-task's reference as the key
+    # `max_running` is the maximum number of concurrently running jobs
+    # `count_timers` is a count of outstanding timers for retrying failed jobs with backoff delay
+    # `requested_stop` is a list of pids that have requested to stop the job queue cleanly
+    {:ok, %{ pending: [], running: %{}, max_running: max_running, count_timers: 0, requested_stop: [] }}
   end
 
   @impl true
   def handle_cast({:enqueue, %Job{} = job}, %{ pending: pending } = state) do
     IO.puts "Enqueueing Job #{job.type} (#{inspect job.payload})"
     # Update the state, then continue after all casts in process inbox are handled
-    {:noreply, %{state | pending: [job | pending]}, {:continue, :from_cast}}
+    {:noreply, %{state | pending: [job | pending]}, {:continue, :job_enqueue}}
   end
 
-  # If the task completed successfully
+  # If the job is retrying
+  @impl true
+  def handle_info({:re_enqueue, %Job{} = job}, %{ pending: pending, count_timers: count_timers } = state) do
+    IO.puts "Re-Enqueueing Job #{job.type} (#{inspect job.payload})"
+    # Update the state, then continue after all other messages in process inbox are handled
+    {:noreply, %{state | pending: [job | pending], count_timers: max(0, count_timers - 1)}, {:continue, :job_re_enqueue}}
+  end
+
+  # If the job-run completed successfully
   @impl true
   def handle_info({ref, result}, %{ running: running } = state) do
     # Remove the task from the running map
@@ -71,12 +73,12 @@ defmodule Codingtest.JobQueue do
     Process.demonitor(ref, [:flush])
 
     # Update the state, then continue after all other info in process inbox are handled
-    {:noreply, %{state | running: remain_running}, {:continue, :from_info}}
+    {:noreply, %{state | running: remain_running}, {:continue, :job_completed}}
   end
 
-  # If the task failed
+  # If the job-run failed
   @impl true
-  def handle_info({:DOWN, ref, :process, _pid, reason}, %{ pending: pending, running: running } = state) do
+  def handle_info({:DOWN, ref, :process, _pid, reason}, %{ running: running, count_timers: count_timers } = state) do
     # Remove the task from the running map
     {failed_job, remain_running} = Map.pop!(running, ref)
 
@@ -89,28 +91,31 @@ defmodule Codingtest.JobQueue do
         IO.inspect(reason)
     end
 
-    # Enqueue the failed task again at the end of the queue
-    now_pending =
+    # Re-Enqueue the failed task again at the end of the queue (with retry backoff delay)
+    count_timers =
       if failed_job.retry_count > 0 do
-        IO.puts "Job #{failed_job.type} (#{inspect failed_job.payload}) will retry again soon."
+        backoff_delay = ceil(1500 / failed_job.retry_count)
+        IO.puts "Job #{failed_job.type} (#{inspect failed_job.payload}) will retry again soon in #{backoff_delay}ms."
         failed_job = %{failed_job | retry_count: failed_job.retry_count - 1, last_error: reason}
-        [failed_job | pending]
+        Process.send_after(self(), {:re_enqueue, failed_job}, backoff_delay)
+        count_timers + 1
       else
         IO.puts "Job #{failed_job.type} (#{inspect failed_job.payload}) has no more retry attempts left."
-        pending
+        count_timers
       end
 
     # Update the state, then continue after all other info in process inbox are handled
-    {:noreply, %{state | pending: now_pending, running: remain_running}, {:continue, :from_info}}
+    {:noreply, %{state | running: remain_running, count_timers: count_timers}, {:continue, :job_failed}}
   end
 
   # Handle starting any pending jobs in the queue
   @impl true
-  def handle_continue(_from, %{ pending: [], running: running, requested_stop: requested_stop } = state) when map_size(running) == 0 and length(requested_stop) > 0 do
+  def handle_continue(_extra, %{ pending: [], running: running, count_timers: 0, requested_stop: requested_stop } = state) when map_size(running) == 0 and length(requested_stop) > 0 do
+    IO.puts "Shutting down job queue now as no pending jobs are left."
     Enum.each(requested_stop, fn pid -> GenServer.reply(pid, :ok) end)
     {:stop, :normal, state}
   end
-  def handle_continue(_from, %{ pending: pending, running: running, max_running: max_running } = state) do
+  def handle_continue(_extra, %{ pending: pending, running: running, max_running: max_running } = state) do
     # Check if we have enough running jobs
     case start_pending_jobs(pending, running, max_running) do
       {[], _, _} ->
@@ -122,13 +127,9 @@ defmodule Codingtest.JobQueue do
 
   # Handle graceful stop / shutdown
   @impl true
-  def handle_call(:stop, _from, %{ pending: [], running: running } = state) when map_size(running) == 0 do
-    IO.puts "Shutting down job queue now as no pending jobs are left..."
-    {:stop, :normal, state}
-  end
   def handle_call(:stop, from, %{ requested_stop: requested_stop } = state) do
     IO.puts "Shutting down job queue once all pending jobs are completed..."
-    {:noreply, %{state | requested_stop: [from | requested_stop]}}
+    {:noreply, %{state | requested_stop: [from | requested_stop]}, {:continue, :clean_stop}}
   end
 
 
