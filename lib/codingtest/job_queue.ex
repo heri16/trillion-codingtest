@@ -22,11 +22,15 @@ defmodule Codingtest.JobQueue do
     GenServer.cast(pid_like, {:enqueue, %Job{type: job_type, payload: job_payload}})
   end
 
-  def stop(pid, force? \\ false, timeout \\ :infinity) when is_pid(pid) do
-    if force? do
-      GenServer.stop(pid, :normal, timeout)
-    else
-      GenServer.call(pid, :stop, timeout)
+  def stop(pid_like \\ __MODULE__, force? \\ false, timeout \\ :infinity) do
+    try do
+      if force? do
+        GenServer.stop(pid_like, :normal, timeout)
+      else
+        GenServer.call(pid_like, :stop, timeout)
+      end
+    catch
+      :exit, _reason -> :ok
     end
   end
 
@@ -111,7 +115,7 @@ defmodule Codingtest.JobQueue do
   # Handle starting any pending jobs in the queue
   @impl true
   def handle_continue(_extra, %{ pending: [], running: running, count_timers: 0, requested_stop: requested_stop } = state) when map_size(running) == 0 and length(requested_stop) > 0 do
-    IO.puts "Shutting down job queue now as no pending jobs are left."
+    IO.puts "Shutting down job queue (#{inspect self()}) now as no pending jobs are left."
     Enum.each(requested_stop, fn pid -> GenServer.reply(pid, :ok) end)
     {:stop, :normal, state}
   end
@@ -128,7 +132,7 @@ defmodule Codingtest.JobQueue do
   # Handle graceful stop / shutdown
   @impl true
   def handle_call(:stop, from, %{ requested_stop: requested_stop } = state) do
-    IO.puts "Shutting down job queue once all pending jobs are completed..."
+    IO.puts "Shutting down job queue (#{inspect self()}) once all pending jobs are completed..."
     {:noreply, %{state | requested_stop: [from | requested_stop]}, {:continue, :clean_stop}}
   end
 

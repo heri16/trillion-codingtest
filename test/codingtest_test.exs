@@ -6,7 +6,7 @@ defmodule CodingtestTest do
 
   setup do
     {:ok, pid} = JobQueue.start_link(nil)
-    # on_exit(fn -> JobQueue.stop(pid, true) end) # don't wait for clean stop
+    on_exit(fn -> JobQueue.stop(pid, true) end) # don't wait for clean stop
     {:ok, pid: pid} # Using pid helps test isolation
   end
 
