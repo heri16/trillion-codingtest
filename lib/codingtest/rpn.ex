@@ -1,6 +1,10 @@
 defmodule CodingTest.RPN do
   @moduledoc """
   A simple RPN calculator.
+
+  Challenge:
+  Create an RPN calculator (integer only).
+  RPN is a different syntax for a calculator where you work left to right applying operations until a single value is resolved.
   """
 
   @doc """
@@ -8,14 +12,23 @@ defmodule CodingTest.RPN do
 
   ## Examples
 
-      iex> CodingTest.RPN.eval("1 2 + 3 *")
-      9
+      iex> CodingTest.RPN.eval("2 3 +")
+      5
 
-      iex> CodingTest.RPN.eval("2 3 + 4 *")
-      14
+      iex> CodingTest.RPN.eval("3 5 7 + - 5 *")
+      -45
 
-      iex> CodingTest.RPN.eval("2 3 + 4 * 5 /")
-      0.8
+      iex> CodingTest.RPN.eval("2 3 + 4 5 - +")
+      4
+
+      iex> CodingTest.RPN.eval("-3 abs 5 +")
+      8
+
+      iex> CodingTest.RPN.eval("2 3 -4 sum")
+      1
+
+      iex> CodingTest.RPN.eval("2 3 -4 sum 7 *")
+      7
   """
   def eval(input) when is_binary(input) do
     input
