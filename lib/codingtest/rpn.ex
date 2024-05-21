@@ -27,7 +27,7 @@ defmodule CodingTest.RPN do
         :error ->
           case { token, acc } do
             {"abs", [left | rest]} -> [abs(left) | rest]
-            {"sum", acc} -> [Enum.sum(acc)]
+            {"sum", all} -> [Enum.sum(all)]
             {"+", [right, left | rest]} -> [left + right | rest]
             {"-", [right, left | rest]} -> [left - right | rest]
             {"*", [right, left | rest]} -> [left * right | rest]
@@ -58,7 +58,7 @@ defmodule CodingTest.RPN do
       :error ->
         case {token, acc} do
           {"abs", [left | rest]} -> eval(tail, [abs(left) | rest])
-          {"sum", acc} -> eval(tail, [sum(acc)])
+          {"sum", all} -> eval(tail, [sum(all)])
           {operator, [right, left | rest]} ->
             num = op(operator, left, right)
             eval(tail, [num | rest])
